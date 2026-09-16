@@ -92,7 +92,7 @@ class AdminController < Admin::BaseController
        first_mapped_at.present? &&
        first_mapped_at < Time.current.beginning_of_month
       @stale_remap = true
-      @remap_confirm_msg = "⚠️ This transaction was first mapped to \"#{@canonical_transaction.event&.name}\" back in #{first_mapped_at.strftime("%B %Y")}. Remapping transactions from previous months may disrupt our accounting. Are you absolutely sure you want to remap this transaction?"
+      @remap_confirm_msg = "⚠️ This transaction was first mapped to \"#{@canonical_transaction.event&.name}\" back in #{first_mapped_at.strftime("%B %Y")}. Remapping transactions mapped in previous months may disrupt our accounting. Are you absolutely sure you want to remap this transaction?"
       @remap_confirm_phrase = "REMAP #{@canonical_transaction.id}"
       @remap_after_message = "Please contact Sierra in the #hcb-ops channel to let them know you remapped transaction ##{@canonical_transaction.id}."
       @remap_warning_tooltip = "This transaction was first mapped in #{first_mapped_at.strftime("%B %Y")}, a closed-out month — remapping it requires extra confirmation."
