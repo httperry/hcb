@@ -71,13 +71,13 @@
       </tr>
     </thead>
     <tbody>
-      <% @mapping_history.each do |h| %>
-        <% event = h[:event_id] && Event.find_by(id: h[:event_id]) %>
-        <% user = h[:user_id] && User.find_by(id: h[:user_id]) %>
+      <% @mapping_history.each do |mapping| %>
+        <% event = @mapping_history_events[mapping[:event_id]] %>
+        <% user = @mapping_history_users[mapping[:user_id]] %>
         <tr>
-          <td><%= format_datetime h[:time] %></td>
+          <td><%= format_datetime mapping[:time] %></td>
           <td>
-            <% if h[:automatic] %>
+            <% if mapping[:automatic] %>
               <em>Automatic</em>
             <% else %>
               <%= user&.email || "Unknown" %>
@@ -86,10 +86,14 @@
           <td>
             <% if event %>
               <%= link_to event.name, event %>
-            <% elsif h[:event_id] %>
-              <em>Deleted event (#<%= h[:event_id] %>)</em>
+            <% elsif mapping[:event_id] %>
+              <em>Deleted event (#<%= mapping[:event_id] %>)</em>
             <% else %>
               <em>Unmapped</em>
+            <% end %>
+            <%# Mapping to a wire or Wise transfer changes the transaction's HCB code, so show which one each mapping was made under. %>
+            <% if @mapping_history_hcb_codes.size > 1 && mapping[:hcb_code] %>
+              (<%= link_to mapping[:hcb_code].hcb_code, hcb_code_path(mapping[:hcb_code]) %>)
             <% end %>
           </td>
         </tr>
