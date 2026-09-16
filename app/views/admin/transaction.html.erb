@@ -59,6 +59,47 @@
   </tbody>
 </table>
 
+<% if @mapping_history.present? %>
+  <h4>Mapping History</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Mapped by</th>
+        <th>Event</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @mapping_history.each do |h| %>
+        <% event = h[:event_id] && Event.find_by(id: h[:event_id]) %>
+        <% user = h[:user_id] && User.find_by(id: h[:user_id]) %>
+        <tr>
+          <td><%= format_datetime h[:time] %></td>
+          <td>
+            <% if h[:automatic] %>
+              <em>Automatic</em>
+            <% else %>
+              <%= user&.email || "Unknown" %>
+            <% end %>
+          </td>
+          <td>
+            <% if event %>
+              <%= link_to event.name, event %>
+            <% elsif h[:event_id] %>
+              <em>Deleted event (#<%= h[:event_id] %>)</em>
+            <% else %>
+              <em>Unmapped</em>
+            <% end %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+
+  <br><hr>
+<% end %>
+
 <% if @suggested_wise_mapping %>
   <div class="border-[#9FE870] border-solid border-1 p-5 my-6">
     <h3 class="mt-0 pt-0 mb-4">Suggested Wise mapping</h3>

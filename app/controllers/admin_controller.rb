@@ -42,6 +42,30 @@ class AdminController < Admin::BaseController
     # other
     @canonical_pending_transactions = CanonicalPendingTransaction.unmapped.where(amount_cents: @canonical_transaction.amount_cents)
     @ahoy_events = Ahoy::Event.where("name in (?) and (properties->'canonical_transaction'->>'id')::int = ?", [::SystemEventService::Write::SettledTransactionMapped::NAME, ::SystemEventService::Write::SettledTransactionCreated::NAME], @canonical_transaction.id).order("time desc")
+    @mapping_history = @ahoy_events.select { |ae| ae.name == ::SystemEventService::Write::SettledTransactionMapped::NAME }
+
+    # Finds first mapping from SetEvent, or CanonicalEventMapping
+    mapped_events = @ahoy_events.select { |ae| ae.name == ::SystemEventService::Write::SettledTransactionMapped::NAME }
+    @mapping_history = mapped_events.map do |ae|
+      {
+        time: ae.time,
+        user_id: ae.properties.dig("user", "id"),
+        event_id: ae.properties.dig("canonical_event_mapping", "event_id"),
+        automatic: false
+      }
+    end
+
+    if (mapping = @canonical_transaction.canonical_event_mapping) &&
+       mapped_events.none? { |ae| (ae.time - mapping.created_at).abs < 1.second }
+      @mapping_history << {
+        time: mapping.created_at,
+        user_id: mapping.user_id,
+        event_id: mapping.event_id,
+        automatic: mapping.user_id.nil?
+      }
+    end
+
+    @mapping_history.sort_by! { |h| h[:time] }
 
     if @canonical_transaction.memo.include?("WISE INC")
       potential_wise_transfers = WiseTransfer.sent.where(usd_amount_cents: -@canonical_transaction.amount_cents)
@@ -58,15 +82,19 @@ class AdminController < Admin::BaseController
                              "Are you really really sure you want to map this transaction? 🤔 it seems like a big one :)"
                            end
 
-    # If this transaction's date falls in a previous month, remapping it annoys Sierra's accounting system.
+    # If this transaction was first mapped in a previous month, remapping it now annoys Sierra's
+    # accounting system. If it's still unmapped, ops mapping it for the first time counts as "first
+    # mapping" and is always fine — @mapping_history is empty in that case, so this never fires.
+    first_mapped_at = @mapping_history.first&.dig(:time)
 
     if @canonical_transaction.canonical_event_mapping.present? &&
-       @canonical_transaction.date < Time.current.beginning_of_month
+       first_mapped_at.present? &&
+       first_mapped_at < Time.current.beginning_of_month
       @stale_remap = true
-      @remap_confirm_msg = "⚠️ This transaction is dated #{@canonical_transaction.date.strftime("%B %Y")} and was already mapped to \"#{@canonical_transaction.event&.name}\". This was from a previous month, so remapping it now may disrupt our accounting. Are you absolutely sure you want to remap this transaction?"
+      @remap_confirm_msg = "⚠️ This transaction was first mapped to \"#{@canonical_transaction.event&.name}\" back in #{first_mapped_at.strftime("%B %Y")}. That month has closed out, so remapping it now may disrupt our accounting. Are you absolutely sure you want to remap this transaction?"
       @remap_confirm_phrase = "REMAP #{@canonical_transaction.id}"
       @remap_after_message = "Please contact Sierra in the #hcb-ops channel to let them know you remapped transaction ##{@canonical_transaction.id}."
-      @remap_warning_tooltip = "This transaction is from a previous month, remapping it requires extra confirmation."
+      @remap_warning_tooltip = "This transaction was first mapped in #{first_mapped_at.strftime("%B %Y")}, a closed-out month — remapping it requires extra confirmation."
     end
   end
 
