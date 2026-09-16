@@ -72,8 +72,9 @@
     </thead>
     <tbody>
       <% @mapping_history.each do |mapping| %>
-        <% event = mapping[:event] %>
         <% user = mapping[:user] %>
+        <% event_id = mapping[:event_id] || mapping.dig(:event, :id) %>
+        <% safe_event = event_id ? Event.find_by(id: event_id) : nil %>
         <tr>
           <td><%= format_datetime mapping[:time] %></td>
           <td>
@@ -84,10 +85,10 @@
             <% end %>
           </td>
           <td>
-            <% if event %>
-              <%= link_to event.name, event %>
-            <% elsif mapping[:event_id] %>
-              <em>Deleted event (#<%= mapping[:event_id] %>)</em>
+            <% if safe_event %>
+              <%= link_to safe_event.name, safe_event %>
+            <% elsif event_id %>
+              <em>Deleted event (#<%= event_id %>)</em>
             <% else %>
               <em>Unmapped</em>
             <% end %>
