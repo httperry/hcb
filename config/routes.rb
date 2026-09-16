@@ -6,6 +6,7 @@ require "sidekiq/cron/web"
 Rails.application.routes.draw do
   # For details on the DSL available within this file, see https://guides.rubyonrails.org/routing.html
   get "up" => "rails/health#show", as: :rails_health_check
+  post Rails.configuration.constants[:csp_violation_report_path], to: "csp_violation_reports#create"
   get "/my_ip", to: "admin#my_ip"
 
   constraints AdminConstraint do
@@ -312,6 +313,7 @@ Rails.application.routes.draw do
       post "referral_link_create", to: "referral/links#create"
       get "unknown_merchants", to: "admin#unknown_merchants"
       post "request_balance_export", to: "admin#request_balance_export"
+      post "request_canonical_transaction_balance_export", to: "admin#request_canonical_transaction_balance_export"
       get "active_teenagers_leaderboard", to: "admin#active_teenagers_leaderboard"
       get "new_teenagers_leaderboard", to: "admin#new_teenagers_leaderboard"
       get "contracts", to: "admin#contracts"
@@ -433,6 +435,7 @@ Rails.application.routes.draw do
   resources :g_suite_accounts, only: [:index, :create, :update, :edit, :destroy], path: "g_suite_accounts" do
     put "reset_password"
     put "toggle_suspension"
+    put "unmanage"
     resources :g_suite_aliases, only: [:create, :destroy], shallow: true
   end
 
@@ -497,14 +500,14 @@ Rails.application.routes.draw do
     end
   end
 
-  resources :wires, only: [:edit, :update] do
+  resources :wires, only: [:show, :edit, :update] do
     member do
       post "send", to: "wires#send_wire"
       post "reject"
     end
   end
 
-  resources :wise_transfers, only: [:edit, :update] do
+  resources :wise_transfers, only: [:show, :update] do
     member do
       post "approve"
       post "reject"
@@ -558,7 +561,6 @@ Rails.application.routes.draw do
       get "attach_receipt"
       get "memo_frame"
       get "dispute"
-      post "invoice_as_personal_transaction"
       post "toggle_tag/:tag_id", to: "hcb_codes#toggle_tag", as: :toggle_tag
       post "send_receipt_sms", to: "hcb_codes#send_receipt_sms", as: :send_sms_receipt
 
@@ -613,7 +615,7 @@ Rails.application.routes.draw do
       post "admin_approve"
       post "admin_send_wise_transfer"
       post "reverse"
-      post "approve_all_expenses"
+      post "approve"
       post "request_changes"
       post "reject"
       post "submit"
@@ -644,6 +646,7 @@ Rails.application.routes.draw do
       post "pin"
       post "unpin"
       patch "rename"
+      post "invoice_as_personal_transaction"
     end
   end
   resources :ledger_items, only: [], path: "transactions", concerns: :commentable
@@ -947,7 +950,7 @@ Rails.application.routes.draw do
 
   resources :tax_forms, only: [:show, :create], controller: "tax/forms" do
     member do
-      post "sync"
+      get "completed"
       post "discard"
     end
   end
@@ -964,6 +967,7 @@ Rails.application.routes.draw do
         get "personal_info"
         get "project_info"
         get "videos"
+        get "sign_agreement"
         get "agreement"
         get "review"
         get "submission"
@@ -1003,7 +1007,6 @@ Rails.application.routes.draw do
     get "ledger"
     post "toggle_new_ledger"
     get "stats"
-    get "ledger_stats"
     get "merchants_filter"
     put "toggle_hidden"
     post "claim_point_of_contact"
@@ -1059,6 +1062,7 @@ Rails.application.routes.draw do
 
     get "async_balance"
     get "async_sub_organization_balance"
+    get "async_sub_organization_balances"
     get "async_sub_organization_rows"
     get "reimbursements_pending_review_icon"
 
