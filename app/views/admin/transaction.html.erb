@@ -72,8 +72,8 @@
     </thead>
     <tbody>
       <% @mapping_history.each do |mapping| %>
-        <% event = @mapping_history_events[mapping[:event_id]] %>
-        <% user = @mapping_history_users[mapping[:user_id]] %>
+        <% event = mapping[:event] %>
+        <% user = mapping[:user] %>
         <tr>
           <td><%= format_datetime mapping[:time] %></td>
           <td>
@@ -92,7 +92,7 @@
               <em>Unmapped</em>
             <% end %>
             <%# Mapping to a wire or Wise transfer changes the transaction's HCB code, so show which one each mapping was made under. %>
-            <% if @mapping_history_hcb_codes.size > 1 && mapping[:hcb_code] %>
+            <% if @show_mapping_hcb_codes && mapping[:hcb_code] %>
               (<%= link_to mapping[:hcb_code].hcb_code, hcb_code_path(mapping[:hcb_code]) %>)
             <% end %>
           </td>

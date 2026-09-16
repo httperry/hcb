@@ -1,0 +1,45 @@
+<p>
+  <%= @user.name %> remapped
+  <%= link_to "transaction ##{@canonical_transaction.id}", transaction_admin_url(@canonical_transaction) %>
+  (<%= ApplicationController.helpers.render_money @canonical_transaction.amount_cents %>, <%= @canonical_transaction.date %>)
+  from <b><%= @previous_event&.name || "no event" %></b>
+  to <b><%= @canonical_transaction.event&.name || "no event" %></b>.
+</p>
+
+<p>
+  It was first mapped in <b><%= @first_mapped_at.strftime("%B %Y") %></b>.
+</p>
+
+<p><b>Memo:</b> <%= @canonical_transaction.memo %></p>
+
+<h3>Mapping history</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th align="left">When</th>
+      <th align="left">Mapped by</th>
+      <th align="left">Event</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @mapping_history.each do |mapping| %>
+      <tr>
+        <td><%= mapping[:time].strftime("%b %e, %Y, %l:%M %p") %></td>
+        <td>
+          <% if mapping[:automatic] %>
+            Automatic
+          <% else %>
+            <%= mapping[:user]&.email || "Unknown" %>
+          <% end %>
+        </td>
+        <td>
+          <%= mapping[:event]&.name || (mapping[:event_id] ? "Deleted event (##{mapping[:event_id]})" : "Unmapped") %>
+          <% if mapping[:hcb_code] %>
+            (<%= mapping[:hcb_code].hcb_code %>)
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>

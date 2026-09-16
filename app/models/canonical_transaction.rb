@@ -33,6 +33,7 @@ class CanonicalTransaction < ApplicationRecord
 
   include Receiptable
   include Categorizable
+  include HasMappingHistory
 
   include PgSearch::Model
   pg_search_scope :search_memo, against: [:memo, :friendly_memo, :custom_memo, :hcb_code], using: { tsearch: { any_word: true, prefix: true, dictionary: "english" } }, ranked_by: "canonical_transactions.date"

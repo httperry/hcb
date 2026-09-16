@@ -44,63 +44,10 @@ class AdminController < Admin::BaseController
     @canonical_pending_transactions = CanonicalPendingTransaction.unmapped.where(amount_cents: @canonical_transaction.amount_cents)
     @ahoy_events = Ahoy::Event.where("name in (?) and (properties->'canonical_transaction'->>'id')::int = ?", [::SystemEventService::Write::SettledTransactionMapped::NAME, ::SystemEventService::Write::SettledTransactionCreated::NAME], @canonical_transaction.id).order("time desc")
 
-    # Every event this canonical transaction has been mapped to, oldest first: one entry per
-    # settledTransactionMapped system event, plus initial mapping through SetEvent (if applicable)
-    @mapping_history = @ahoy_events.select { |ae| ae.name == ::SystemEventService::Write::SettledTransactionMapped::NAME }.map do |ae|
-      {
-        time: ae.time,
-        user_id: ae.properties.dig("user", "id"),
-        event_id: ae.properties.dig("canonical_event_mapping", "event_id"),
-        canonical_event_mapping_id: ae.properties.dig("canonical_event_mapping", "id"),
-        automatic: false
-      }
-    end
-
-    if (mapping = @canonical_transaction.canonical_event_mapping) &&
-       @mapping_history.none? { |m| m[:canonical_event_mapping_id] == mapping.id }
-      @mapping_history << {
-        time: mapping.created_at,
-        user_id: mapping.user_id,
-        event_id: mapping.event_id,
-        canonical_event_mapping_id: mapping.id,
-        automatic: mapping.user_id.nil?
-      }
-    end
-
-    # Mapping a transaction to a wire or Wise transfer rewrites its hcb_code, so it can have carried
-    # several over its life. The transaction's own versions record each one.
-    hcb_code_changes = @canonical_transaction.versions
-                                             .where("object_changes -> 'hcb_code' is not null")
-                                             .map { |version| { time: version.created_at, before: version.object_changes["hcb_code"].first, after: version.object_changes["hcb_code"].last } }
-    @mapping_history_hcb_codes = HcbCode.where(hcb_code: (hcb_code_changes.flat_map { |change| change.values_at(:before, :after) } << @canonical_transaction.hcb_code).compact.uniq).index_by(&:hcb_code)
-
-    PaperTrail::Version.where(item_type: "HcbCode", item_id: @mapping_history_hcb_codes.values.map(&:id))
-                       .where("object_changes -> 'event_id' is not null")
-                       .where(created_at: @canonical_transaction.created_at..)
-                       .find_each do |version|
-      event_id = version.object_changes["event_id"].last
-      next if @mapping_history.any? { |m| m[:event_id] == event_id }
-
-      @mapping_history << {
-        time: version.created_at,
-        user_id: version.whodunnit&.match?(/\A\d+\z/) ? version.whodunnit.to_i : nil,
-        event_id:,
-        automatic: version.whodunnit.blank?
-      }
-    end
-
-    @mapping_history = @mapping_history.sort_by { |m| m[:time] }
-
-    # Which HCB code the transaction carried when each mapping was made. Mapping to a wire or Wise
-    # transfer sets the event and rewrites the hcb_code in one action, so a change moments after a
-    # mapping belongs to that mapping.
-    @mapping_history.each do |m|
-      change = hcb_code_changes.reverse.find { |c| c[:time] <= m[:time] + 5.seconds }
-      m[:hcb_code] = @mapping_history_hcb_codes[change ? change[:after] : (hcb_code_changes.first&.dig(:before) || @canonical_transaction.hcb_code)]
-    end
-
-    @mapping_history_events = Event.where(id: @mapping_history.filter_map { |m| m[:event_id] }).index_by(&:id)
-    @mapping_history_users = User.where(id: @mapping_history.filter_map { |m| m[:user_id] }).index_by(&:id)
+    @mapping_history = @canonical_transaction.mapping_history
+    # Mapping to a wire or Wise transfer changes the transaction's HCB code, so when it has carried
+    # more than one, show which each mapping was made under.
+    @show_mapping_hcb_codes = @mapping_history.filter_map { |m| m[:hcb_code] }.uniq.many?
 
     if @canonical_transaction.memo.include?("WISE INC") || @canonical_transaction.memo.include?("WISE LTD")
       potential_wise_transfers = WiseTransfer.sent.where(usd_amount_cents: -@canonical_transaction.amount_cents)
@@ -124,7 +71,7 @@ class AdminController < Admin::BaseController
 
     if first_mapping && first_mapping[:time] < Time.current.beginning_of_month
       first_mapped_month = first_mapping[:time].strftime("%B %Y")
-      first_mapped_event = @mapping_history_events[first_mapping[:event_id]]
+      first_mapped_event = first_mapping[:event]
       verb = @canonical_transaction.canonical_event_mapping.present? ? "remap" : "map"
 
       @stale_remap = true
@@ -1351,12 +1298,38 @@ class AdminController < Admin::BaseController
   end
 
   def set_event
+    canonical_transaction = CanonicalTransaction.find(params[:id])
+
+    # The warning shown on the transaction page; if it was there, tell accounting it went ahead.
+    mapping_history = canonical_transaction.mapping_history
+    first_mapping = mapping_history.first
+    stale_remap = first_mapping && first_mapping[:time] < Time.current.beginning_of_month
+    previous_event = canonical_transaction.event
+
     @canonical_transaction = ::CanonicalTransactionService::SetEvent.new(canonical_transaction_id: params[:id], event_id: params[:event_id], user: current_user).run
 
     safely do
       ledger = Ledger.find_or_create_by!(primary: true, event_id: params[:event_id])
 
       Ledger::Mapping.map_primary!(ledger:, ledger_item: @canonical_transaction.ledger_item, mapped_by: current_user)
+    end
+
+    if stale_remap
+      AdminMailer.with(
+        canonical_transaction: @canonical_transaction,
+        user: current_user,
+        previous_event:,
+        first_mapped_at: first_mapping[:time],
+        # The history as it was, plus the mapping just made - cheaper than reading it back.
+        mapping_history: mapping_history + [{
+          time: Time.current,
+          user: current_user,
+          event: @canonical_transaction.event,
+          event_id: @canonical_transaction.event&.id,
+          automatic: false,
+          hcb_code: @canonical_transaction.local_hcb_code
+        }]
+      ).remapped_transaction.deliver_later
     end
 
     redirect_to transaction_admin_path(@canonical_transaction)
@@ -1466,7 +1439,7 @@ class AdminController < Admin::BaseController
       safely do
         ledger = Ledger.find_or_create_by!(primary: true, event_id: wise_transfer.event.id)
 
-        Ledger::Mapping.map_primary!(ledger:, ledger_item: li, mapped_by: current_user)
+        Ledger::Mapping.map_primary!(ledger:, ledger_item: canonical_transaction.ledger_item, mapped_by: current_user)
       end
 
       CanonicalPendingTransactionService::Settle.new(

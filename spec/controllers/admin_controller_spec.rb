@@ -134,6 +134,50 @@ RSpec.describe AdminController do
       expect(response.body).to include("Are you absolutely sure you want to map this transaction?")
     end
 
+    describe "emailing accounting after a warned-about remap" do
+      let(:sierra) { create(:user) }
+      let(:lucy) { create(:user) }
+
+      before do
+        allow(User).to receive(:find_by_public_id).and_call_original
+        allow(User).to receive(:find_by_public_id).with("usr_JptgR1").and_return(sierra)
+        allow(User).to receive(:find_by_public_id).with("usr_MVtap3").and_return(lucy)
+      end
+
+      it "emails Sierra and Lucy with the mapping history when a closed-month mapping is remapped", versioning: true do
+        canonical_transaction = settled_three_months_ago
+        travel_to(3.months.ago) { create(:canonical_event_mapping, canonical_transaction:, event: original_event) }
+
+        expect do
+          perform_enqueued_jobs { post :set_event, params: { id: canonical_transaction.id, event_id: new_event.id } }
+        end.to change { ActionMailer::Base.deliveries.count }.by(1)
+
+        email = ActionMailer::Base.deliveries.last
+        expect(email.to).to contain_exactly(sierra.email, lucy.email)
+        expect(email.subject).to include("Transaction ##{canonical_transaction.id}")
+        expect(email.body.encoded).to include("Originally mapped event")
+        expect(email.body.encoded).to include("Remapped event")
+        expect(email.body.encoded).to include(3.months.ago.strftime("%B %Y"))
+      end
+
+      it "doesn't email when the transaction was first mapped this month", versioning: true do
+        canonical_transaction = create(:canonical_transaction, transaction_source: create(:raw_plaid_transaction))
+        create(:canonical_event_mapping, canonical_transaction:, event: original_event)
+
+        expect do
+          perform_enqueued_jobs { post :set_event, params: { id: canonical_transaction.id, event_id: new_event.id } }
+        end.not_to(change { ActionMailer::Base.deliveries.count })
+      end
+
+      it "doesn't email when a never-mapped transaction is mapped for the first time", versioning: true do
+        canonical_transaction = settled_three_months_ago
+
+        expect do
+          perform_enqueued_jobs { post :set_event, params: { id: canonical_transaction.id, event_id: new_event.id } }
+        end.not_to(change { ActionMailer::Base.deliveries.count })
+      end
+    end
+
     it "doesn't warn when the transaction has never been mapped" do
       canonical_transaction = settled_three_months_ago
 
